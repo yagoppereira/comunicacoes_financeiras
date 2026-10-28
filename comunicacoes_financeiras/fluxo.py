@@ -1,6 +1,7 @@
 """
 Orquestração de uma comunicação financeira. Três passos, nesta ordem:
 
+    lista = ler_lista_planilha(link_do_xlsx)  códigos CIGAM da planilha
     previa = preparar(bq, campanha, lista)   lê o DW, resolve a lista, agrupa,
                                              devolve a PRÉVIA (DataFrame)
     previa_email(campanha, previa)           mostra o e-mail renderizado
@@ -18,7 +19,11 @@ CNPJ, de propósito: assim todo mundo que lê a mensagem já é destinatário de
 cada cadastro listado nela — nunca expõe um cadastro a quem não é contato dele.
 """
 
+import base64
+import io
 import json
+import re
+from pathlib import Path
 
 import pandas as pd
 
@@ -44,14 +49,92 @@ def conectar_colab():
 
 def criar_enviador(usuario: str, senha_app: str, **kw):
     """SMTP com os padrões do financeiro: From e Reply-To
-    contato.financeiro@ctasmart.com.br e o logo embutido na assinatura.
+    contato.financeiro@ctasmart.com.br e o cabeçalho da marca embutido.
     `usuario` é a conta que autentica — ver envio.criar_enviador_smtp."""
     kw.setdefault("remetente", _base.REMETENTE_EMAIL)
     kw.setdefault("nome_exibicao", _base.REMETENTE_NOME)
     kw.setdefault("reply_to", _base.REMETENTE_EMAIL)
-    kw.setdefault("logo_path", _base.LOGO_PATH)
-    kw.setdefault("logo_cid", _base.LOGO_CID)
+    kw.setdefault("imagens", _base.IMAGENS)
     return envio.criar_enviador_smtp(usuario, senha_app, **kw)
+
+
+# ---------------------------------------------------------------------------
+# Lista a partir de planilha
+# ---------------------------------------------------------------------------
+
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def id_do_drive(link_ou_id: str) -> str:
+    """Aceita o link do Drive/Sheets como vem do navegador, ou o ID puro."""
+    m = re.search(r"/d/([A-Za-z0-9_-]{20,})", link_ou_id) or \
+        re.search(r"[?&]id=([A-Za-z0-9_-]{20,})", link_ou_id)
+    if m:
+        return m.group(1)
+    if re.fullmatch(r"[A-Za-z0-9_-]{20,}", link_ou_id.strip()):
+        return link_ou_id.strip()
+    raise ValueError(f"não reconheci um arquivo do Drive em {link_ou_id!r}")
+
+
+def baixar_do_drive(link_ou_id: str) -> bytes:
+    """Baixa um .xlsx do Drive, ou exporta uma planilha do Google como .xlsx.
+    Usa a identidade do Colab (rode conectar_colab() antes) e funciona com
+    arquivo compartilhado com você, sem precisar montar o Drive."""
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaIoBaseDownload
+
+    file_id = id_do_drive(link_ou_id)
+    drive = build("drive", "v3", cache_discovery=False)
+    meta = drive.files().get(fileId=file_id, fields="name,mimeType",
+                             supportsAllDrives=True).execute()
+    if meta["mimeType"] == "application/vnd.google-apps.spreadsheet":
+        pedido = drive.files().export_media(fileId=file_id, mimeType=XLSX)
+    else:
+        pedido = drive.files().get_media(fileId=file_id, supportsAllDrives=True)
+    buf = io.BytesIO()
+    baixador = MediaIoBaseDownload(buf, pedido)
+    pronto = False
+    while not pronto:
+        _, pronto = baixador.next_chunk()
+    print(f"baixado do Drive: {meta['name']}")
+    return buf.getvalue()
+
+
+def _normalizar_nome(v) -> str:
+    return str(v or "").strip().casefold()
+
+
+def ler_lista_planilha(origem, aba: str = "lista comunicado",
+                       coluna: str = "COD CIGAM") -> list:
+    """Lê a coluna de códigos de uma aba do .xlsx.
+
+    origem: caminho do arquivo, bytes do arquivo, ou link/ID do Drive.
+    Nome de aba e de coluna é comparado sem diferenciar maiúscula e sem os
+    espaços das pontas ('UNIFICAÇÃO ' com espaço no fim é comum).
+    Células vazias ficam de fora; o resto vai como está para preparar(), que
+    explica o que não reconhecer.
+    """
+    if isinstance(origem, (bytes, bytearray)):
+        fonte = io.BytesIO(origem)
+    elif Path(str(origem)).is_file():
+        fonte = str(origem)
+    else:
+        fonte = io.BytesIO(baixar_do_drive(str(origem)))
+
+    with pd.ExcelFile(fonte) as planilha:
+        abas = {_normalizar_nome(n): n for n in planilha.sheet_names}
+        if _normalizar_nome(aba) not in abas:
+            raise ValueError(f"aba {aba!r} não existe. Abas: {planilha.sheet_names}")
+        df = planilha.parse(abas[_normalizar_nome(aba)], dtype=object)
+
+    colunas = {_normalizar_nome(c): c for c in df.columns}
+    if _normalizar_nome(coluna) not in colunas:
+        raise ValueError(f"coluna {coluna!r} não existe na aba {aba!r}. Colunas: {list(df.columns)}")
+    valores = [v for v in df[colunas[_normalizar_nome(coluna)]].tolist()
+               if not (v is None or (isinstance(v, float) and v != v) or str(v).strip() == "")]
+    print(f"{len(valores)} código(s) lido(s) da aba {abas[_normalizar_nome(aba)]!r} "
+          f"({len(df) - len(valores)} linha(s) vazia(s) ignorada(s)).")
+    return valores
 
 
 def agrupar(incluidos: list) -> list:
@@ -150,12 +233,21 @@ def previa_email(campanha, previa: pd.DataFrame, codigo: str = None, quantos: in
         print(f"ASSUNTO:  {job.assunto}")
         print("=" * 78)
         if display:
-            # O logo vem por cid: e só resolve no e-mail de verdade; aqui ele
-            # aparece quebrado, o que é esperado.
-            display(HTML(job.html))
+            display(HTML(html_para_visualizar(job.html)))
         else:
             print(job.texto)
     return fila[:quantos]
+
+
+def html_para_visualizar(corpo_html: str) -> str:
+    """Troca os cid: pelas imagens em base64. cid: só resolve dentro do e-mail;
+    no notebook ou no navegador a imagem apareceria quebrada."""
+    for cid, caminho in _base.IMAGENS.items():
+        p = Path(caminho)
+        dados = base64.b64encode(p.read_bytes()).decode()
+        corpo_html = corpo_html.replace(
+            f"cid:{cid}", f"data:image/{p.suffix.lstrip('.') or 'png'};base64,{dados}")
+    return corpo_html
 
 
 def disparar(campanha, previa: pd.DataFrame, enviar_fn, registro,

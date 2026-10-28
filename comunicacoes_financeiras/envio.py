@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 import csv
 import html as _html
+import re
 import time
 from pathlib import Path
 
@@ -95,13 +96,23 @@ def aplicar_redirecionamento(job: Job, redirecionar_para: str) -> Job:
         f"*** MODO TESTE - nao foi para o cliente ***\n"
         f"Destinatarios reais: {para}\nCopia real: {cc}\n{'-' * 60}\n\n"
     )
+    aviso = AVISO_TESTE.format(para=_html.escape(para), cc=_html.escape(cc))
     return Job(
         codigos=job.codigos, nome=job.nome,
         para=[redirecionar_para], cc=[],
         assunto=f"[TESTE {job.chave}] {job.assunto}",
-        html=AVISO_TESTE.format(para=_html.escape(para), cc=_html.escape(cc)) + job.html,
+        html=_inserir_no_topo(job.html, aviso),
         texto=cabecalho_txt + job.texto,
     )
+
+
+def _inserir_no_topo(corpo_html: str, trecho: str) -> str:
+    """Logo depois do <body>, quando o HTML é um documento completo; antes
+    dele, o trecho ficaria fora do documento."""
+    m = re.search(r"<body[^>]*>", corpo_html, flags=re.I)
+    if not m:
+        return trecho + corpo_html
+    return corpo_html[:m.end()] + trecho + corpo_html[m.end():]
 
 
 def disparar(fila: list, campanha, enviar_fn, registro,
@@ -252,7 +263,7 @@ class RegistroPlanilha:
 def criar_enviador_smtp(usuario: str, senha_app: str, remetente: str = "",
                         nome_exibicao: str = "", reply_to: str = "",
                         host: str = "smtp.gmail.com", porta: int = 587,
-                        logo_path: str = None, logo_cid: str = None):
+                        imagens: dict = None):
     """Devolve um enviar_fn(job) que manda via SMTP com HTML e texto puro.
 
     usuario   conta que AUTENTICA no SMTP (senha de app dela).
@@ -263,21 +274,23 @@ def criar_enviador_smtp(usuario: str, senha_app: str, remetente: str = "",
 
     Senha de app, nunca a senha da conta, e guardada em Secrets do Colab.
 
-    logo_path: imagem da assinatura EMBUTIDA como parte inline (cid:). URL de
-    repositório privado e link do Drive viram quadrado vazio no cliente.
+    imagens: {cid: caminho} EMBUTIDAS como partes inline e referenciadas no
+    HTML por cid:. URL de repositório privado e link do Drive viram quadrado
+    vazio no cliente; embutida, a imagem não depende de nada externo.
     """
     import smtplib
     from email.message import EmailMessage
     from email.utils import formataddr
 
     remetente = remetente or usuario
-    logo_bytes = None
-    if logo_path:
-        p = Path(logo_path)
-        if p.is_file():
-            logo_bytes = p.read_bytes()
-        else:
-            print(f"  AVISO: logo não encontrado em '{logo_path}'. A assinatura sai sem imagem.")
+    embutidas = []
+    for cid, caminho in (imagens or {}).items():
+        p = Path(caminho)
+        if not p.is_file():
+            # Falha aqui, antes do primeiro envio: sem a imagem o e-mail sai
+            # com um quadrado quebrado no lugar do cabeçalho.
+            raise FileNotFoundError(f"imagem '{cid}' não encontrada em {p}")
+        embutidas.append((cid, p.read_bytes(), p.suffix.lower().lstrip(".") or "png", p.name))
 
     def enviar(job: Job):
         msg = EmailMessage()
@@ -291,12 +304,10 @@ def criar_enviador_smtp(usuario: str, senha_app: str, remetente: str = "",
         msg.set_content(job.texto)
         msg.add_alternative(job.html, subtype="html")
 
-        if logo_bytes and logo_cid:
-            # Na PARTE HTML, não na raiz: vira multipart/related e o cid resolve.
-            ext = Path(logo_path).suffix.lower().lstrip(".") or "png"
+        # Na PARTE HTML, não na raiz: vira multipart/related e o cid resolve.
+        for cid, dados, ext, nome in embutidas:
             msg.get_payload()[-1].add_related(
-                logo_bytes, maintype="image", subtype=ext,
-                cid=f"<{logo_cid}>", filename=Path(logo_path).name)
+                dados, maintype="image", subtype=ext, cid=f"<{cid}>", filename=nome)
 
         with smtplib.SMTP(host, porta, timeout=30) as s:
             s.starttls()

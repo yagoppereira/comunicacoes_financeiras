@@ -1,88 +1,64 @@
 """
-Aviso de unificação de contratos.
+Aviso de unificação das mensalidades de aluguel e licenciamento.
 
 Comunicado informativo: não cobra, não tem prazo, não pede ação do cliente.
-Um e-mail pode cobrir vários cadastros (mesmos destinatários) e lista todos.
+Um e-mail pode cobrir vários cadastros (mesmos destinatários) e lista todos no
+quadro "Cadastros contemplados", logo depois do primeiro parágrafo.
 
-O TEXTO está isolado nas constantes abaixo para ser editado sem mexer na
-montagem. {vigencia} vira "A partir do faturamento de <parametro>" quando a
-campanha traz parametros={"vigencia": "dezembro/2026"}, e "A partir do
-próximo faturamento" quando não traz.
+O TEXTO está nas constantes abaixo, como veio do financeiro, para ser editado
+sem mexer na montagem. **assim** vira negrito no HTML.
 
 Quem recebe: contato do cadastro com e-mail de NF-e OU de boleto marcado — é
 exatamente o documento que muda com a unificação.
 """
 
-import html
-
 from . import _base
 
-NOME = "Aviso de unificação de contratos"
+NOME = "Aviso de unificação das mensalidades"
 FLAGS_CONTATO = ("recebeEmailNfe", "recebeEmailBoleto")
-PARAMETROS = {"vigencia": False}
+PARAMETROS = {}
 
-ASSUNTO = "Comunicado: unificação de contratos – Cta Smart - {identificacao}"
+ASSUNTO = "Unificação das mensalidades de aluguel e licenciamento – ctasmart – {identificacao}"
+ROTULO = "Comunicado financeiro"
+TITULO = "Unificação das mensalidades"
+PREHEADER = ("A partir do próximo ciclo de faturamento, as mensalidades de aluguel e "
+             "licenciamento serão unificadas.")
 
-CORPO_HTML = """<div style="{estilo}">
-<p>Prezado Cliente,</p>
-<p>Informamos que os contratos de prestação de serviço com a Cta Smart
-{referentes} foram <strong>unificados em um único contrato</strong>:</p>
-{tabela}
-<p>{vigencia}, as cobranças que antes eram emitidas separadamente passam a ser
-consolidadas em uma única cobrança mensal. Os serviços e equipamentos
-contratados permanecem os mesmos, e nenhuma ação é necessária da sua parte.</p>
-<p>Em caso de dúvidas, basta responder a este e-mail.</p>
-<p>Atenciosamente,</p>
-{assinatura}
-</div>"""
+SAUDACAO = "Prezado cliente,"
 
-CORPO_TEXTO = """Prezado Cliente,
+PARAGRAFOS = [
+    "Informamos que, a partir do próximo ciclo de faturamento, as mensalidades referentes "
+    "ao aluguel e ao licenciamento serão unificadas por CNPJ e/ou por contrato jurídico.",
 
-Informamos que os contratos de prestação de serviço com a Cta Smart
-{referentes} foram unificados em um único contrato:
+    "Essa mudança visa simplificar sua gestão financeira, oferecendo mais transparência, "
+    "facilidade de conferência e controle nos pagamentos.",
 
-{lista}
+    "Ressaltamos que **os valores contratados permanecem inalterados**, tratando-se apenas "
+    "de uma otimização no modelo de faturamento.",
 
-{vigencia}, as cobranças que antes eram emitidas separadamente passam a ser
-consolidadas em uma única cobrança mensal. Os serviços e equipamentos
-contratados permanecem os mesmos, e nenhuma ação é necessária da sua parte.
-
-Em caso de dúvidas, basta responder a este e-mail.
-
-Atenciosamente,
-
-{assinatura}
-"""
-
-
-def _frase_vigencia(parametros: dict) -> str:
-    v = str((parametros or {}).get("vigencia") or "").strip()
-    return f"A partir do faturamento de {v}" if v else "A partir do próximo faturamento"
+    "Permanecemos à disposição para eventuais esclarecimentos.",
+]
 
 
 def montar(clientes: list, campanha) -> dict:
     if not clientes:
         raise ValueError("nenhum cadastro para montar o e-mail.")
 
-    referentes = ("referentes ao cadastro abaixo" if len(clientes) == 1
-                  else f"referentes aos {len(clientes)} cadastros abaixo")
-    vigencia = _frase_vigencia(campanha.parametros)
+    corpo_html = "\n".join([
+        _base.paragrafos_html([SAUDACAO, PARAGRAFOS[0]]),
+        _base.bloco_cadastros_html(clientes),
+        _base.paragrafos_html(PARAGRAFOS[1:]),
+    ])
+    texto = "\n\n".join([
+        SAUDACAO,
+        _base.paragrafos_texto(PARAGRAFOS[:1]),
+        _base.lista_cadastros_texto(clientes),
+        _base.paragrafos_texto(PARAGRAFOS[1:]),
+        _base.assinatura_texto(),
+    ]) + "\n"
 
-    corpo_html = CORPO_HTML.format(
-        estilo=_base.ESTILO_CORPO,
-        referentes=referentes,
-        tabela=_base.tabela_clientes_html(clientes),
-        vigencia=html.escape(vigencia),
-        assinatura=_base.assinatura_html(),
-    )
-    corpo_texto = CORPO_TEXTO.format(
-        referentes=referentes,
-        lista=_base.lista_clientes_texto(clientes),
-        vigencia=vigencia,
-        assinatura=_base.assinatura_texto(),
-    )
     return {
         "assunto": ASSUNTO.format(identificacao=_base.identificacao_assunto(clientes)),
-        "html": corpo_html,
-        "texto": corpo_texto,
+        "html": _base.documento(TITULO, ROTULO, corpo_html, PREHEADER),
+        "texto": texto,
     }

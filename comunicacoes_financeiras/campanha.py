@@ -16,7 +16,7 @@ Sem nenhum dos dois, disparar() se recusa a enviar. O default (dry_run=True)
 
 O que muda de uma comunicação para outra (o texto, quais contatos recebem)
 mora no MODELO (pasta modelos/), não aqui. `parametros` leva o que o modelo
-pede, ex.: {"vigencia": "dezembro/2026"} na unificação de contratos.
+pede (a unificação não pede nenhum: ver PARAMETROS no modelo).
 """
 
 from dataclasses import dataclass, field
@@ -129,7 +129,19 @@ def separar_entrada(entrada) -> list:
         itens = re.split(r"[\n;,\t]+", entrada)
     else:
         itens = list(entrada)
-    return [str(i).strip() for i in itens if str(i or "").strip()]
+    out = []
+    for i in itens:
+        # Planilha lê código como número: 5115.0. Sem isto o ".0" vira dígito
+        # e o código 005115 viraria 051150 — outro cliente, ou nenhum.
+        if isinstance(i, float):
+            if i != i:          # NaN = célula vazia
+                continue
+            if i.is_integer():
+                i = int(i)
+        texto = str(i if i is not None else "").strip()
+        if texto:
+            out.append(texto)
+    return out
 
 
 def classificar_entrada(valor) -> tuple:

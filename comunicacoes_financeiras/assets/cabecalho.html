@@ -1,0 +1,34 @@
+<!doctype html>
+<!--
+  Cabeçalho dos e-mails. Gerado como imagem (cabecalho.png) porque cliente de
+  e-mail não renderiza SVG nem CSS de rotação: o grafismo do losango só chega
+  igual para todo mundo se for imagem.
+
+  Brandbook 2026: fundo Night (#060D1F), logo branco para fundo escuro,
+  grafismo "Losango Isolado" sempre vazado, em Cobalt/Fuel Green/branco com
+  opacidade entre 15% e 55%, e barra de cor em Fuel Green na base.
+
+  Para regenerar: node comunicacoes_financeiras/assets/gerar_cabecalho.js
+-->
+<html><head><meta charset="utf-8">
+<style>
+  html, body { margin: 0; }
+  .faixa { position: relative; width: 600px; height: 150px; overflow: hidden;
+           background: #060D1F; }
+  .logo { position: absolute; left: 40px; top: 50%; transform: translateY(-50%);
+          height: 58px; }
+  .losango { position: absolute; border-style: solid; border-radius: 14%;
+             transform: rotate(45deg); box-sizing: border-box; }
+  .barra { position: absolute; left: 0; right: 0; bottom: 0; height: 4px;
+           background: #00C389; }
+</style></head>
+<body><div class="faixa">
+  <div class="losango" style="width:250px;height:250px;left:405px;top:-50px;border-width:2px;border-color:rgba(0,64,208,.55)"></div>
+  <div class="losango" style="width:190px;height:190px;left:435px;top:-20px;border-width:2px;border-color:rgba(0,195,137,.45)"></div>
+  <div class="losango" style="width:130px;height:130px;left:465px;top:10px;border-width:1.5px;border-color:rgba(0,64,208,.50)"></div>
+  <div class="losango" style="width:70px;height:70px;left:495px;top:40px;border-width:1.5px;border-color:rgba(0,195,137,.40)"></div>
+  <div class="losango" style="width:20px;height:20px;left:318px;top:30px;border-width:1.5px;border-color:rgba(255,255,255,.30)"></div>
+  <div class="losango" style="width:14px;height:14px;left:296px;top:104px;border-width:1.5px;border-color:rgba(0,195,137,.45)"></div>
+  <img class="logo" src="{logo_branco}" alt="">
+  <div class="barra"></div>
+</div></body></html>

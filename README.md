@@ -1,4 +1,4 @@
-# Comunicações financeiras — CTA Smart
+# Comunicações financeiras — ctasmart
 
 Envio de comunicados para clientes a partir de `contato.financeiro@ctasmart.com.br`,
 com os destinatários tirados **só do cadastro do CIGAM no DW**
@@ -7,12 +7,14 @@ com os destinatários tirados **só do cadastro do CIGAM no DW**
 Segue o desenho do aviso de bloqueio (`Cta-Link2pump-Block-Routine`), mais enxuto:
 não há títulos, encargos nem congelamento em planilha. Ficaram as proteções de envio.
 
-Primeiro comunicado: **aviso de unificação de contratos** (`comunicacoes_financeiras/modelos/unificacao_contratos.py`).
+Primeiro comunicado: **aviso de unificação das mensalidades** de aluguel e licenciamento
+(`comunicacoes_financeiras/modelos/unificacao_contratos.py`).
 
 ## Ciclo
 
 | Passo | Função | Consulta o DW? |
 |---|---|---|
+| Ler a lista | `fluxo.ler_lista_planilha(link_do_xlsx)` | não |
 | Preparar | `fluxo.preparar(bq, c, lista)` | sim |
 | Conferir | humano: a prévia e quem NÃO vai receber | não |
 | Ver o e-mail | `fluxo.previa_email(c, previa)` | não |
@@ -50,15 +52,14 @@ from comunicacoes_financeiras.campanha import Campanha
 
 bq = fluxo.conectar_colab()
 
-# Lista dos clientes afetados: códigos CIGAM, CNPJs ou CPFs, um por linha.
-lista = """
-000479
-76.538.412/0001-41
-3106
-"""
+# Lista dos clientes afetados: coluna "COD CIGAM" da aba "lista comunicado".
+# Aceita o link do Drive (arquivo compartilhado com você), o ID ou um caminho local.
+lista = fluxo.ler_lista_planilha(
+    "https://docs.google.com/spreadsheets/d/111fwG0ouHLTcxOFmzR2IhH0ADLcLy6Xf/edit",
+    aba="lista comunicado", coluna="COD CIGAM")
+# ou, colando à mão: lista = """000479\n3106\n76.538.412/0001-41"""
 
-PARAM = dict(id_campanha="UNIF-2026-11-A", modelo="unificacao_contratos",
-             parametros={"vigencia": "dezembro/2026"})   # opcional; sem ele: "próximo faturamento"
+PARAM = dict(id_campanha="UNIF-2026-11-A", modelo="unificacao_contratos")
 
 c = Campanha.ensaio(**PARAM)
 previa, resolucao = fluxo.preparar(bq, c, lista)   # imprime quem NÃO vai receber e por quê
@@ -91,6 +92,9 @@ Para valer:
 fluxo.disparar(Campanha.producao(**PARAM), previa, enviar, registro)
 ```
 
+Na lista, código repetido conta uma vez (o resumo diz quantos). Código lido como número
+pela planilha (`5115.0`) é tratado como `005115`.
+
 Sem `Campanha.teste` ou `Campanha.producao` nada sai: o default é o ensaio, e uma campanha
 de produção sem `confirmo_producao=True` é recusada. O log é por código de cliente:
 reexecutar continua de onde parou e não manda duas vezes para o mesmo cadastro.
@@ -106,12 +110,30 @@ O SMTP do Gmail precisa de uma conta com senha de app (exige verificação em du
   remetente pela sua conta. O Reply-To já aponta para `contato.financeiro@`.
 
 O teto diário padrão é 450 destinatários (Gmail comum corta em 500, Workspace em 2.000).
-Ao bater o teto, a fila fica pendente para a próxima execução.
+Ao bater o teto, a fila fica pendente para a próxima execução. Numa conta Workspace dá
+para subir, ex.: `Campanha.producao(**PARAM, teto_diario=1500)`.
+
+## Visual
+
+Segue o brandbook 2026 do marketing (`comunicacoes_financeiras/modelos/_base.py`):
+cabeçalho Night com o logo branco e o grafismo do losango vazado, rótulo em Fuel Green,
+título em Poppins, texto em DM Sans, quadro de cadastros com barra Cobalt, assinatura com
+barra Fuel Green, rodapé Night. O nome da marca é sempre `ctasmart`, minúsculo.
+
+- O cabeçalho é imagem (`comunicacoes_financeiras/assets/cabecalho.png`), embutida no
+  e-mail: cliente de e-mail não desenha SVG nem rotação em CSS. Para mudar, edite
+  `assets/cabecalho.html` e rode `node comunicacoes_financeiras/assets/gerar_cabecalho.js`
+  (Playwright para Node).
+- Poppins e DM Sans aparecem no Apple Mail, no iOS e no Outlook para Mac. O Gmail ignora
+  fonte externa e mostra Helvetica/Arial; o resto do layout fica igual.
+- `previa_email()` mostra o cabeçalho de verdade no notebook (troca o `cid:` pela imagem).
 
 ## Novo comunicado
 
-Copie `comunicacoes_financeiras/modelos/unificacao_contratos.py`, troque o texto, `FLAGS_CONTATO` e `PARAMETROS`, e
-registre em `comunicacoes_financeiras/modelos/__init__.py`. O resto (lista, contatos, prévia, envio, log) é o mesmo.
+Copie `comunicacoes_financeiras/modelos/unificacao_contratos.py`, troque `ASSUNTO`, `TITULO`,
+`PARAGRAFOS` (`**assim**` vira negrito), `FLAGS_CONTATO` e `PARAMETROS`, e registre em
+`comunicacoes_financeiras/modelos/__init__.py`. A moldura visual, a lista, os contatos, a
+prévia, o envio e o log são os mesmos.
 
 ## Testes
 
@@ -119,6 +141,6 @@ registre em `comunicacoes_financeiras/modelos/__init__.py`. O resto (lista, cont
 python -m unittest discover -s comunicacoes_financeiras/tests -t .
 ```
 
-Cobrem lista, contatos, agrupamento, texto e fila. SMTP, BigQuery e Sheets não estão
+Cobrem lista (inclusive leitura do .xlsx), contatos, agrupamento, texto, marca e fila. SMTP, BigQuery e Sheets não estão
 cobertos (dependem de credencial): faça o teste redirecionado com 2 ou 3 clientes antes de
 enviar para valer.
