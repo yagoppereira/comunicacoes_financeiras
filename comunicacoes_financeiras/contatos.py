@@ -113,10 +113,13 @@ def emails_elegiveis(contatos_json, flags) -> tuple:
 class Resolucao:
     incluidos: list = field(default_factory=list)    # dicts de cliente, ordem da entrada
     rejeitados: list = field(default_factory=list)   # (entrada, motivo)
+    repetidos: int = 0     # linhas da lista que repetem um cadastro já incluído
 
     def resumo(self) -> str:
         n_emails = sum(len(c["emails"]) for c in self.incluidos)
         linhas = [f"{len(self.incluidos)} cliente(s) com destinatário, {n_emails} e-mail(s)."]
+        if self.repetidos:
+            linhas.append(f"{self.repetidos} linha(s) repetida(s) na lista, consideradas uma vez.")
         if self.rejeitados:
             linhas.append(f"{len(self.rejeitados)} NÃO vão receber — confira antes de disparar:")
             linhas += [f"   {v!r}: {m}" for v, m in self.rejeitados]
@@ -154,13 +157,18 @@ def resolver(entrada, cadastros: list, flags) -> Resolucao:
             por_documento.setdefault(doc, []).append(c)
 
     r = Resolucao()
-    ja: set[str] = set()
+    ja: set[str] = set()        # cadastros incluídos
+    vistos: set = set()         # entradas já tratadas (inclusive as rejeitadas)
 
     for bruto in separar_entrada(entrada):
         tipo, valor = classificar_entrada(bruto)
         if tipo is None:
             r.rejeitados.append((bruto, valor))
             continue
+        if (tipo, valor) in vistos:
+            r.repetidos += 1
+            continue
+        vistos.add((tipo, valor))
 
         if tipo == "codigo":
             cad = por_codigo.get(valor)
@@ -190,7 +198,9 @@ def resolver(entrada, cadastros: list, flags) -> Resolucao:
 
         codigo = str(cad["codigo"]).zfill(6)
         if codigo in ja:
-            r.rejeitados.append((bruto, f"duplicado na lista ({codigo})"))
+            # Repetição não é problema a conferir: o cliente recebe uma vez.
+            # Contada à parte para não esconder os rejeitados de verdade.
+            r.repetidos += 1
             continue
 
         emails, optout = emails_elegiveis(cad.get("contatos_json"), flags)

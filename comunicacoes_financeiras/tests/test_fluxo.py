@@ -79,7 +79,9 @@ class TestContatos(unittest.TestCase):
             cads, FLAGS)
         self.assertEqual([c["codigo"] for c in r.incluidos], ["000479"])
         motivos = dict(r.rejeitados)
-        self.assertIn("duplicado", motivos["08.077.872/0003-21"])
+        # o CNPJ do 000479 repete um cadastro já incluído: conta, não rejeita
+        self.assertNotIn("08.077.872/0003-21", motivos)
+        self.assertEqual(r.repetidos, 1)
         self.assertIn("CLIENTE LOCAL", motivos["500"])
         self.assertIn("LINK2PUMP", motivos["679"])
         self.assertIn("informe o código", motivos["111.111.111-11"])
@@ -87,6 +89,18 @@ class TestContatos(unittest.TestCase):
         self.assertIn("não existe", motivos["999"])
         self.assertIn("divisão 20", motivos["888"])
         self.assertIn("CLIENTE LOCAL", motivos["22.222.222/0001-22"])
+
+    def test_repetido_rejeitado_aparece_uma_vez(self):
+        r = contatos.resolver(["999", "999", 999.0], [], FLAGS)
+        self.assertEqual(r.rejeitados, [("999", "código 000999 não existe no CIGAM")])
+        self.assertEqual(r.repetidos, 2)
+
+    def test_codigo_lido_como_numero_da_planilha(self):
+        # 5115.0 viraria 051150 se o '.0' fosse tratado como dígito
+        self.assertEqual(separar_entrada([5115.0, 29, float("nan"), None, "  "]), ["5115", "29"])
+        cads = [_cad("005115", "51150000000115")]
+        r = contatos.resolver([5115.0], cads, FLAGS)
+        self.assertEqual([c["codigo"] for c in r.incluidos], ["005115"])
 
     def test_documento_com_um_pagante_e_um_local(self):
         cads = [_cad("000100", "66666666000166"),
@@ -120,22 +134,47 @@ class TestAgrupamentoEModelo(unittest.TestCase):
         self.assertEqual(list(previa["qtd_cadastros"]), [2, 1])
 
     def test_email_lista_todos_os_cadastros(self):
-        c = Campanha(id_campanha="T", modelo=MODELO, parametros={"vigencia": "dezembro/2026"})
+        c = Campanha(id_campanha="T", modelo=MODELO)
         fila = fluxo.montar_fila(c, fluxo.montar_previa(self.incluidos))
         job = fila[0]
         self.assertEqual(job.para, ["financeiro@grupo.com.br"])
-        self.assertIn("GRUPO OBRA 1", job.html)
-        self.assertIn("GRUPO OBRA 2", job.html)
-        self.assertIn("10.000.000/0002-02", job.html)
-        self.assertIn("dezembro/2026", job.texto)
-        self.assertIn("aos 2 cadastros", job.texto)
+        for trecho in ("GRUPO OBRA 1", "GRUPO OBRA 2", "10.000.000/0002-02"):
+            self.assertIn(trecho, job.html)
+            self.assertIn(trecho, job.texto)
         self.assertIn("e mais 1 cadastro", job.assunto)
         self.assertEqual(fila[1].assunto,
-                         "Comunicado: unificação de contratos – Cta Smart - "
+                         "Unificação das mensalidades de aluguel e licenciamento – ctasmart – "
                          "CLIENTE 000003 - 30.000.000/0001-03")
-        self.assertIn("próximo faturamento",
-                      fluxo.montar_fila(Campanha(id_campanha="T", modelo=MODELO),
-                                        fluxo.montar_previa(self.incluidos))[1].texto)
+
+    def test_texto_do_financeiro(self):
+        job = fluxo.montar_fila(Campanha(id_campanha="T", modelo=MODELO),
+                                fluxo.montar_previa(self.incluidos))[1]
+        for p in unificacao_contratos.PARAGRAFOS:
+            self.assertIn(_base.paragrafos_texto([p]), job.texto)
+        self.assertTrue(job.texto.startswith("Prezado cliente,"))
+        self.assertIn("<strong", job.html)            # **...** vira negrito
+        self.assertNotIn("**", job.html + job.texto)
+        self.assertIn("permanecem inalterados", job.html)
+
+    def test_marca(self):
+        job = fluxo.montar_fila(Campanha(id_campanha="T", modelo=MODELO),
+                                fluxo.montar_previa(self.incluidos))[0]
+        self.assertIn(f"cid:{_base.CID_CABECALHO}", job.html)
+        for cor in (_base.NIGHT, _base.COBALT, _base.VERDE):
+            self.assertIn(cor, job.html)
+        # brandbook: o nome é sempre minúsculo
+        for errado in ("Cta Smart", "CTA Smart", "CtaSmart", "Ctasmart"):
+            self.assertNotIn(errado, job.html + job.texto + job.assunto)
+        for caminho in _base.IMAGENS.values():
+            self.assertTrue(Path(caminho).is_file(), caminho)
+        self.assertNotIn("cid:", fluxo.html_para_visualizar(job.html))
+
+    def test_aviso_de_teste_dentro_do_body(self):
+        job = fluxo.montar_fila(Campanha(id_campanha="T", modelo=MODELO),
+                                fluxo.montar_previa(self.incluidos))[0]
+        h = envio.aplicar_redirecionamento(job, "eu@ctasmart.com.br").html
+        self.assertTrue(h.startswith("<!doctype html>"))
+        self.assertLess(h.index("<body"), h.index("MODO TESTE"))
 
     def test_nome_com_html_escapado(self):
         cads = [_cad("000009", "90000000000109", nome="A & B <LTDA>")]
@@ -154,6 +193,31 @@ class TestAgrupamentoEModelo(unittest.TestCase):
         c = Campanha(id_campanha="T", modelo=MODELO, parametros={"data_limite": "x"})
         with self.assertRaises(ValueError):
             fluxo.montar_fila(c, fluxo.montar_previa(self.incluidos))
+
+    def test_lista_da_planilha(self):
+        import pandas as pd
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "lista.xlsx"
+            with pd.ExcelWriter(p) as w:
+                pd.DataFrame({"Contrato": [1]}).to_excel(w, sheet_name="UNIFICAÇÃO ", index=False)
+                pd.DataFrame({"COD CIGAM": [5115, None, 29.0, 5115]}).to_excel(
+                    w, sheet_name="lista comunicado", index=False)
+            valores = fluxo.ler_lista_planilha(p)
+            self.assertEqual(separar_entrada(valores), ["5115", "29", "5115"])
+            with self.assertRaises(ValueError):
+                fluxo.ler_lista_planilha(p, aba="não existe")
+            with self.assertRaises(ValueError):
+                fluxo.ler_lista_planilha(p, coluna="CNPJ")
+            self.assertEqual(fluxo.ler_lista_planilha(p, aba=" UNIFICAÇÃO", coluna="contrato"), [1])
+
+    def test_id_do_drive(self):
+        fid = "111fwG0ouHLTcxOFmzR2IhH0ADLcLy6Xf"
+        self.assertEqual(fluxo.id_do_drive(
+            f"https://docs.google.com/spreadsheets/d/{fid}/edit?gid=285068875#gid=285068875"), fid)
+        self.assertEqual(fluxo.id_do_drive(f"https://drive.google.com/file/d/{fid}/view"), fid)
+        self.assertEqual(fluxo.id_do_drive(fid), fid)
+        with self.assertRaises(ValueError):
+            fluxo.id_do_drive("planilha.xlsx")
 
     def test_previa_csv_preserva_zero(self):
         previa = fluxo.montar_previa(self.incluidos)
