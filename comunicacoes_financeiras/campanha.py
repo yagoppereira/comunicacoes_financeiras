@@ -40,7 +40,8 @@ class Campanha:
     redirecionar_para: str | None = None
     confirmo_producao: bool = False
 
-    # Em TESTE, o log de teste faz a fila progredir entre execuções.
+    # Em TESTE, o log de teste faz a fila progredir entre execuções — mas só
+    # para o MESMO endereço de teste; outro endereço recebe tudo de novo.
     # reenviar=True ignora esse log — serve para reconferir o texto depois de
     # mexer no modelo. Não afeta produção: os logs de cada modo são separados.
     reenviar: bool = False

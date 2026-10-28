@@ -239,8 +239,8 @@ class RegistroMemoria:
     def __init__(self):
         self.linhas = []
 
-    def ja_enviados(self, id_campanha, modo):
-        return envio._codigos_enviados(self.linhas, id_campanha, modo)
+    def ja_enviados(self, id_campanha, modo, enviado_para=None):
+        return envio._codigos_enviados(self.linhas, id_campanha, modo, enviado_para)
 
     def gravar(self, linha):
         self.linhas.append(linha)
@@ -306,6 +306,30 @@ class TestDisparo(unittest.TestCase):
                                                         reenviar=True),
                        enviados.append, reg, pausa_segundos=0)
         self.assertEqual(len(enviados), 1)
+
+    def test_teste_para_outro_endereco_envia_de_novo(self):
+        # O caso real: teste para uma pessoa, depois para outra, mesma campanha.
+        reg = RegistroMemoria()
+        fila = [_job("005115"), _job("005177", "005180")]
+        envio.disparar(fila, Campanha.teste("T", MODELO, para="yago@ctasmart.com.br"),
+                       lambda j: None, reg, pausa_segundos=0)
+
+        enviados = []
+        r = envio.disparar(fila, Campanha.teste("T", MODELO, para="Paul@ctasmart.com.br"),
+                           enviados.append, reg, pausa_segundos=0)
+        self.assertEqual([j.chave for j in enviados], ["005115", "005177+005180"])
+        self.assertEqual(r.pulados, [])
+
+        # repetir para o mesmo endereço (maiúscula não importa) continua pulando
+        enviados = []
+        r = envio.disparar(fila, Campanha.teste("T", MODELO, para="paul@ctasmart.com.br"),
+                           enviados.append, reg, pausa_segundos=0)
+        self.assertEqual(enviados, [])
+        self.assertIn("paul@ctasmart.com.br", r.pulados[0][1])
+        self.assertIn("reenviar=True", r.pulados[0][1])
+
+        # e nada disso conta para produção
+        self.assertEqual(reg.ja_enviados("T", "PRODUCAO"), set())
 
     def test_teto_diario_deixa_pendente(self):
         c = Campanha.producao("T", MODELO, teto_diario=3)
