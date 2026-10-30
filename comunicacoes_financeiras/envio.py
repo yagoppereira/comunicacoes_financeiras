@@ -115,23 +115,36 @@ def _inserir_no_topo(corpo_html: str, trecho: str) -> str:
     return corpo_html[:m.end()] + trecho + corpo_html[m.end():]
 
 
+def codigos_ja_enviados(campanha, registro) -> tuple:
+    """(códigos que esta execução deve considerar já avisados, motivo do pulo).
+
+    ENSAIO consulta o log de PRODUÇÃO: ele simula produção, e o número que
+    interessa é quantos sairiam de verdade agora.
+    TESTE só considera o que já foi para O MESMO endereço de teste: trocar quem
+    confere (outra pessoa, outra caixa) manda de novo. Repetir para o mesmo
+    endereço continua pulando, para a fila avançar sob o teto diário.
+    """
+    modo_log = "PRODUCAO" if campanha.dry_run else campanha.modo
+    if modo_log == "TESTE":
+        alvo = campanha.redirecionar_para
+        ja = set() if campanha.reenviar else set(registro.ja_enviados(
+            campanha.id_campanha, modo_log, enviado_para=alvo))
+        return ja, f"já enviado no teste para {alvo} (reenviar=True manda de novo)"
+    return set(registro.ja_enviados(campanha.id_campanha, modo_log)), "já enviado nesta campanha"
+
+
 def disparar(fila: list, campanha, enviar_fn, registro,
              pausa_segundos: float = 1.5) -> Resultado:
     """Percorre a fila enviando e gravando uma linha de log por mensagem.
 
     enviar_fn(job) -> None, levanta exceção em caso de falha.
-    registro: objeto com ja_enviados(id_campanha, modo) -> set de códigos
-              e gravar(dict). Ver RegistroCSV / RegistroPlanilha.
+    registro: objeto com ja_enviados(id_campanha, modo, enviado_para) -> set
+              de códigos e gravar(dict). Ver RegistroCSV / RegistroPlanilha.
     """
     campanha.checar_pode_enviar()          # recusa produção não confirmada
     redirecionar = campanha.redirecionar_para
     ensaio = campanha.dry_run
-
-    # ENSAIO consulta o log de PRODUÇÃO: ele simula produção, e o número que
-    # interessa é quantos sairiam de verdade agora.
-    modo_log = "PRODUCAO" if ensaio else campanha.modo
-    ja = set() if (campanha.reenviar and modo_log == "TESTE") else \
-        set(registro.ja_enviados(campanha.id_campanha, modo_log))
+    ja, motivo_ja = codigos_ja_enviados(campanha, registro)
 
     print(f"modo: {campanha.modo}"
           + (f" -> tudo para {redirecionar}" if redirecionar else "")
@@ -140,7 +153,7 @@ def disparar(fila: list, campanha, enviar_fn, registro,
     r = Resultado()
     for job in fila:
         if set(job.codigos) & ja:
-            r.pulados.append((job.chave, "já enviado nesta campanha"))
+            r.pulados.append((job.chave, motivo_ja))
             continue
         if not job.para:
             r.pulados.append((job.chave, "sem destinatário"))
@@ -205,11 +218,13 @@ def _linha_log(campanha, job: Job, efetivo: Job, status: str, erro: str) -> dict
     }
 
 
-def _codigos_enviados(linhas, id_campanha: str, modo: str) -> set:
+def _codigos_enviados(linhas, id_campanha: str, modo: str, enviado_para: str = None) -> set:
+    alvo = (enviado_para or "").strip().lower()
     out = set()
     for l in linhas:
         if (str(l.get("id_campanha")) == id_campanha and str(l.get("modo")) == modo
-                and str(l.get("status")) == "ENVIADO"):
+                and str(l.get("status")) == "ENVIADO"
+                and (not alvo or str(l.get("enviado_para") or "").strip().lower() == alvo)):
             out.update(c.strip().zfill(6) for c in str(l.get("codigos") or "").split(";")
                        if c.strip())
     return out
@@ -222,11 +237,11 @@ class RegistroCSV:
     def __init__(self, caminho):
         self.caminho = Path(caminho)
 
-    def ja_enviados(self, id_campanha: str, modo: str) -> set:
+    def ja_enviados(self, id_campanha: str, modo: str, enviado_para: str = None) -> set:
         if not self.caminho.is_file():
             return set()
         with self.caminho.open(newline="", encoding="utf-8") as f:
-            return _codigos_enviados(csv.DictReader(f), id_campanha, modo)
+            return _codigos_enviados(csv.DictReader(f), id_campanha, modo, enviado_para)
 
     def gravar(self, linha: dict):
         novo = not self.caminho.is_file()
@@ -249,8 +264,8 @@ class RegistroPlanilha:
         if not self.ws.row_values(1):
             self.ws.append_row(COLUNAS_LOG, value_input_option="RAW")
 
-    def ja_enviados(self, id_campanha: str, modo: str) -> set:
-        return _codigos_enviados(self.ws.get_all_records(), id_campanha, modo)
+    def ja_enviados(self, id_campanha: str, modo: str, enviado_para: str = None) -> set:
+        return _codigos_enviados(self.ws.get_all_records(), id_campanha, modo, enviado_para)
 
     def gravar(self, linha: dict):
         self.ws.append_row([linha.get(c, "") for c in COLUNAS_LOG], value_input_option="RAW")

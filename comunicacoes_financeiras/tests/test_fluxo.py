@@ -219,6 +219,34 @@ class TestAgrupamentoEModelo(unittest.TestCase):
         with self.assertRaises(ValueError):
             fluxo.id_do_drive("planilha.xlsx")
 
+    def test_cadastro_novo_no_grupo_de_um_ja_avisado(self):
+        # O caso real: 002148 recebeu sozinho; depois a planilha ganhou o 002147,
+        # com os mesmos destinatários, e os dois viraram um e-mail só. Antes o
+        # e-mail inteiro era pulado e o 002147 ficava sem aviso.
+        mesmo = _contatos(("fin@empresa.com.br", "S", "S"))
+        a = _cad("002148", "21480000000101", contatos_json=mesmo, nome="EMPRESA MATRIZ")
+        b = _cad("002147", "21470000000101", contatos_json=mesmo, nome="EMPRESA FILIAL")
+        reg, c = RegistroMemoria(), Campanha.producao("T", MODELO)
+
+        antes = fluxo.montar_previa(contatos.resolver(["2148"], [a], FLAGS).incluidos)
+        fluxo.disparar(c, antes, lambda j: None, reg, pausa_segundos=0)
+
+        depois = fluxo.montar_previa(contatos.resolver(["2148", "2147"], [a, b], FLAGS).incluidos)
+        self.assertEqual(list(depois["chave"]), ["002148+002147"])
+        enviados = []
+        r = fluxo.disparar(c, depois, enviados.append, reg, pausa_segundos=0)
+        self.assertEqual([j.codigos for j in enviados], [("002147",)])
+        self.assertEqual(enviados[0].para, ["fin@empresa.com.br"])
+        self.assertIn("EMPRESA FILIAL", enviados[0].html)
+        self.assertNotIn("EMPRESA MATRIZ", enviados[0].html)   # já foi avisado
+        self.assertEqual(r.pulados, [])
+
+        # terceira execução: tudo avisado, o grupo inteiro é pulado
+        enviados = []
+        r = fluxo.disparar(c, depois, enviados.append, reg, pausa_segundos=0)
+        self.assertEqual(enviados, [])
+        self.assertEqual(r.pulados, [("002148+002147", "já enviado nesta campanha")])
+
     def test_previa_csv_preserva_zero(self):
         previa = fluxo.montar_previa(self.incluidos)
         with tempfile.TemporaryDirectory() as d:
@@ -239,8 +267,8 @@ class RegistroMemoria:
     def __init__(self):
         self.linhas = []
 
-    def ja_enviados(self, id_campanha, modo):
-        return envio._codigos_enviados(self.linhas, id_campanha, modo)
+    def ja_enviados(self, id_campanha, modo, enviado_para=None):
+        return envio._codigos_enviados(self.linhas, id_campanha, modo, enviado_para)
 
     def gravar(self, linha):
         self.linhas.append(linha)
@@ -306,6 +334,30 @@ class TestDisparo(unittest.TestCase):
                                                         reenviar=True),
                        enviados.append, reg, pausa_segundos=0)
         self.assertEqual(len(enviados), 1)
+
+    def test_teste_para_outro_endereco_envia_de_novo(self):
+        # O caso real: teste para uma pessoa, depois para outra, mesma campanha.
+        reg = RegistroMemoria()
+        fila = [_job("005115"), _job("005177", "005180")]
+        envio.disparar(fila, Campanha.teste("T", MODELO, para="yago@ctasmart.com.br"),
+                       lambda j: None, reg, pausa_segundos=0)
+
+        enviados = []
+        r = envio.disparar(fila, Campanha.teste("T", MODELO, para="Paul@ctasmart.com.br"),
+                           enviados.append, reg, pausa_segundos=0)
+        self.assertEqual([j.chave for j in enviados], ["005115", "005177+005180"])
+        self.assertEqual(r.pulados, [])
+
+        # repetir para o mesmo endereço (maiúscula não importa) continua pulando
+        enviados = []
+        r = envio.disparar(fila, Campanha.teste("T", MODELO, para="paul@ctasmart.com.br"),
+                           enviados.append, reg, pausa_segundos=0)
+        self.assertEqual(enviados, [])
+        self.assertIn("paul@ctasmart.com.br", r.pulados[0][1])
+        self.assertIn("reenviar=True", r.pulados[0][1])
+
+        # e nada disso conta para produção
+        self.assertEqual(reg.ja_enviados("T", "PRODUCAO"), set())
 
     def test_teto_diario_deixa_pendente(self):
         c = Campanha.producao("T", MODELO, teto_diario=3)

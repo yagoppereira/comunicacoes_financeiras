@@ -189,22 +189,38 @@ def preparar(bq, campanha, lista, project: str = PROJECT_ID):
     return previa, resolucao
 
 
-def montar_fila(campanha, previa: pd.DataFrame) -> list:
+def montar_fila(campanha, previa: pd.DataFrame, ja_avisados=frozenset()) -> list:
     """Jobs a partir da PRÉVIA. A prévia e o disparo usam este mesmo caminho:
     se a prévia montasse o e-mail por conta própria, você conferiria uma coisa
-    e dispararia outra."""
+    e dispararia outra.
+
+    ja_avisados: códigos que o log diz que já receberam. Num e-mail que junta
+    cadastros avisados e não avisados — acontece quando a planilha ganha um
+    código novo com os mesmos destinatários de um que já recebeu — o e-mail é
+    REFEITO só com os que faltam. Sem isso o grupo inteiro seria pulado e o
+    cadastro novo ficaria sem aviso. E-mail todo já avisado vai inteiro, para
+    o disparo o relatar como pulado.
+    """
     modelo = modelos.obter(campanha.modelo)
     modelos.validar_parametros(modelo, campanha.parametros)
 
     fila = []
     for linha in previa.to_dict("records"):
         clientes = json.loads(linha["clientes_json"])
+        faltam = [c for c in clientes if c["codigo"] not in ja_avisados]
+        nome = str(linha["nome"])
+        if faltam and len(faltam) < len(clientes):
+            print(f"   e-mail refeito sem os já avisados: {linha['chave']} -> "
+                  f"{'+'.join(c['codigo'] for c in faltam)}")
+            clientes = faltam
+            nome = _base.razao_social(clientes[0]) + (
+                f" (+{len(clientes) - 1})" if len(clientes) > 1 else "")
         para = [e.strip() for e in str(linha["para"] or "").split(";") if e.strip()]
         cc = [e for e in dict.fromkeys(campanha.copia_padrao) if e not in para]
         corpo = modelo.montar(clientes, campanha)
         fila.append(envio.Job(
             codigos=tuple(c["codigo"] for c in clientes),
-            nome=str(linha["nome"]),
+            nome=nome,
             para=para, cc=cc,
             assunto=corpo["assunto"], html=corpo["html"], texto=corpo["texto"],
         ))
@@ -255,7 +271,8 @@ def disparar(campanha, previa: pd.DataFrame, enviar_fn, registro,
     """Envia o que está na prévia. NÃO consulta o DW."""
     if previa is None or previa.empty:
         raise RuntimeError("prévia vazia — rode preparar() antes.")
-    return envio.disparar(montar_fila(campanha, previa), campanha,
+    ja, _ = envio.codigos_ja_enviados(campanha, registro)
+    return envio.disparar(montar_fila(campanha, previa, ja_avisados=ja), campanha,
                           enviar_fn=enviar_fn, registro=registro,
                           pausa_segundos=pausa_segundos)
 
