@@ -115,6 +115,24 @@ def _inserir_no_topo(corpo_html: str, trecho: str) -> str:
     return corpo_html[:m.end()] + trecho + corpo_html[m.end():]
 
 
+def codigos_ja_enviados(campanha, registro) -> tuple:
+    """(códigos que esta execução deve considerar já avisados, motivo do pulo).
+
+    ENSAIO consulta o log de PRODUÇÃO: ele simula produção, e o número que
+    interessa é quantos sairiam de verdade agora.
+    TESTE só considera o que já foi para O MESMO endereço de teste: trocar quem
+    confere (outra pessoa, outra caixa) manda de novo. Repetir para o mesmo
+    endereço continua pulando, para a fila avançar sob o teto diário.
+    """
+    modo_log = "PRODUCAO" if campanha.dry_run else campanha.modo
+    if modo_log == "TESTE":
+        alvo = campanha.redirecionar_para
+        ja = set() if campanha.reenviar else set(registro.ja_enviados(
+            campanha.id_campanha, modo_log, enviado_para=alvo))
+        return ja, f"já enviado no teste para {alvo} (reenviar=True manda de novo)"
+    return set(registro.ja_enviados(campanha.id_campanha, modo_log)), "já enviado nesta campanha"
+
+
 def disparar(fila: list, campanha, enviar_fn, registro,
              pausa_segundos: float = 1.5) -> Resultado:
     """Percorre a fila enviando e gravando uma linha de log por mensagem.
@@ -126,20 +144,7 @@ def disparar(fila: list, campanha, enviar_fn, registro,
     campanha.checar_pode_enviar()          # recusa produção não confirmada
     redirecionar = campanha.redirecionar_para
     ensaio = campanha.dry_run
-
-    # ENSAIO consulta o log de PRODUÇÃO: ele simula produção, e o número que
-    # interessa é quantos sairiam de verdade agora.
-    modo_log = "PRODUCAO" if ensaio else campanha.modo
-    # TESTE só pula o que já foi para O MESMO endereço de teste: trocar quem
-    # confere (outra pessoa, outra caixa) manda de novo. Repetir para o mesmo
-    # endereço continua pulando, para a fila avançar sob o teto diário.
-    if modo_log == "TESTE":
-        ja = set() if campanha.reenviar else set(registro.ja_enviados(
-            campanha.id_campanha, modo_log, enviado_para=redirecionar))
-        motivo_ja = f"já enviado no teste para {redirecionar} (reenviar=True manda de novo)"
-    else:
-        ja = set(registro.ja_enviados(campanha.id_campanha, modo_log))
-        motivo_ja = "já enviado nesta campanha"
+    ja, motivo_ja = codigos_ja_enviados(campanha, registro)
 
     print(f"modo: {campanha.modo}"
           + (f" -> tudo para {redirecionar}" if redirecionar else "")
