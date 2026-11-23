@@ -5,8 +5,10 @@ O texto é o da aba "Modelo" da planilha "Black Friday (Inadimplência)". O
 percentual e o prazo entram como parâmetro da campanha (padrão: 20% e
 28/11/2026, como no Modelo), para o mesmo texto servir a outra rodada.
 
-O VALOR vem da planilha, não do DW: aba resumo_, coluna "Total Saldo",
-só as linhas com "Considerar?" = Sim (ver selecionar()). O e-mail mostra
+QUEM recebe vem da planilha: aba resumo_, linhas com "Considerar?" = Sim
+(ver selecionar()). QUANTO vem do DW, que é o estado atual da carteira: o
+notebook troca o "Total Saldo" da planilha pelo vencido em aberto hoje com
+titulos.usar_saldo_dw(), depois de mostrar as diferenças. O e-mail mostra
 saldo, desconto e o valor à vista; o desconto é calculado por cadastro, em
 Decimal e meio-pra-cima, e o total é a soma dos cadastros — assim a conta do
 quadro fecha linha a linha com o que o financeiro vai emitir.
@@ -42,7 +44,7 @@ DESTAQUE = "{pct}% DE DESCONTO na quitação de todos os títulos em atraso."
 COMO_APROVEITAR = "Como aproveitar:"
 PASSOS = [
     "Responda este e-mail ou chame a gente no whatsapp {whatsapp}.",
-    "Enviaremos o boleto ou a chave PIX com o desconto já aplicado.",
+    "Enviaremos a conta bancária ou a chave PIX com o desconto já aplicado.",
     "Faça o pagamento até {prazo}.",
 ]
 FECHAMENTO = [
