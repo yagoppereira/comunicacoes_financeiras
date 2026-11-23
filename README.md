@@ -130,19 +130,19 @@ barra Fuel Green, rodapé Night. O nome da marca é sempre `ctasmart`, minúscul
 
 ## Black Friday (desconto nos títulos em atraso)
 
-Modelo `black_friday`. Diferente da unificação, cada e-mail mostra um VALOR por cliente,
-que vem da planilha aprovada e não do DW:
+Modelo `black_friday`. Diferente da unificação, cada e-mail mostra um VALOR por cliente:
 
-- **Quem e quanto:** aba `resumo_` da planilha "Black Friday (Inadimplência)", linhas com
-  `Considerar?` = Sim, coluna `Total Saldo`. O código CIGAM é o número no começo de
+- **Quem:** aba `resumo_` da planilha "Black Friday (Inadimplência)", linhas com
+  `Considerar?` = Sim. O código CIGAM é o número no começo de
   `Empresa` ("003262 - PEDRO ..."). `black_friday.selecionar()` recusa a planilha se houver
   código repetido com saldos diferentes, linha sem código ou saldo zerado.
 - **Conta:** desconto de 20% (parâmetro `percentual`) sobre o saldo de cada cadastro,
   arredondado meio-pra-cima no centavo; o total é a soma dos cadastros. O e-mail mostra saldo,
   desconto e o valor à vista até 28/11/2026 (parâmetro `prazo`). Texto da aba "Modelo".
-- **Conferência no DW:** `titulos.conferir_saldos()` compara o saldo da planilha com os
-  títulos vencidos em aberto em `silver.titulos_cigam` e lista quem mudou. Não troca valor:
-  quem não deve receber sai da lista antes do `preparar()`.
+- **Quanto:** o saldo vencido em aberto HOJE no DW (`silver.titulos_cigam`), que é o estado
+  atual da carteira. `titulos.conferir_saldos()` compara com o `Total Saldo` da planilha e
+  lista quem mudou (pagou parte, pagou tudo, venceu título novo); `titulos.usar_saldo_dw()`
+  troca o saldo pelo do DW e tira quem zerou. O da planilha fica em `saldo_planilha`.
 - **Destinatários:** os mesmos da unificação (NF-e ou boleto = S). Cadastros com os mesmos
   destinatários vão num e-mail só, com o saldo de cada um e o total.
 - O valor fica **congelado na prévia**: o disparo manda o que foi conferido.

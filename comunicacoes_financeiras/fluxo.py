@@ -250,7 +250,8 @@ def _anexar_dados(resolucao, dados: dict, exige) -> None:
         faltam = [k for k in exige if d is None or d.get(k) in (None, "")]
         if faltam:
             resolucao.rejeitados.append(
-                (cli["codigo"], f"{cli['codigo']} sem {', '.join(faltam)} nos dados da planilha"))
+                (cli["codigo"], f"{cli['codigo']} sem {', '.join(faltam)} nos dados "
+                                f"(fora da planilha ou zerado no DW)"))
             continue
         cli["dados"] = dict(d or {})
         ficam.append(cli)

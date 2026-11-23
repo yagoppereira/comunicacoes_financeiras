@@ -1,10 +1,12 @@
 """
 Conferência de saldo em aberto no DW, para comunicados que mostram valor.
 
-O valor do e-mail vem da PLANILHA aprovada (ex.: aba resumo_ da Black
-Friday), não do DW. Esta conferência só aponta quem mudou desde que a
-planilha foi montada — pagou um título, pagou tudo, ou entrou título novo
-vencido — para a pessoa decidir antes do envio. Ela não troca valor nenhum.
+A planilha diz QUEM recebe; o DW diz QUANTO, porque é o estado atual da
+carteira. conferir_saldos() aponta quem mudou desde que a planilha foi
+montada — pagou um título, pagou tudo, ou venceu título novo — e
+usar_saldo_dw() troca o saldo de cada cliente pelo do DW antes do
+preparar(). O saldo da planilha fica guardado em `saldo_planilha`, para a
+conferência de depois.
 
 FONTE: silver.titulos_cigam, a mesma do aviso de bloqueio: saldo > 0 e
 vencimento anterior à data-base. A gold.inadimplencia é reescrita durante o
@@ -82,6 +84,41 @@ def conferir_saldos(bq, dados: dict, project: str, campo: str = "saldo",
     for situacao, n in contagem.items():
         print(f"   {n:>4}  {situacao}")
     if (df["situacao"] != "confere").any():
-        print("O e-mail usa o valor da PLANILHA. Para tirar alguém do envio, remova o "
-              "código da lista antes de preparar().")
+        print("Rode dados = titulos.usar_saldo_dw(dados, conf) para o e-mail usar o saldo do DW.")
     return df
+
+
+def usar_saldo_dw(dados: dict, conferencia: pd.DataFrame, campo: str = "saldo") -> dict:
+    """Novo `dados` com o saldo do DW no lugar do da planilha.
+
+    conferencia: o que conferir_saldos() devolveu, NA MESMA sessão — o DW
+    muda durante o dia, e é esse retrato que vai congelado na prévia.
+    Cliente zerado no DW sai: não há o que oferecer, e o preparar() o lista
+    entre os rejeitados ("sem saldo nos dados").
+    """
+    por_codigo = {r["codigo"]: r for r in conferencia.to_dict("records")}
+    faltando = sorted(set(dados) - set(por_codigo))
+    if faltando:
+        raise ValueError(f"a conferência não tem {len(faltando)} cliente(s) dos dados "
+                         f"({', '.join(faltando[:5])}...): rode conferir_saldos() de novo.")
+    novo, trocados, zerados = {}, [], []
+    for codigo, d in dados.items():
+        r = por_codigo[codigo]
+        if r["saldo_dw"] <= 0:
+            zerados.append(codigo)
+            continue
+        novo[codigo] = {**d, campo: str(r["saldo_dw"]), f"{campo}_planilha": str(r["saldo_planilha"])}
+        if r["situacao"] != "confere":
+            trocados.append(codigo)
+    total = sum(Decimal(d[campo]) for d in novo.values())
+    print(f"Saldo do DW em {len(novo)} cliente(s), total {_brl(total)}; "
+          f"{len(trocados)} com valor diferente da planilha"
+          + (f" ({', '.join(trocados)})" if trocados else "") + ".")
+    if zerados:
+        print(f"{len(zerados)} zerado(s) no DW, fora do envio: {', '.join(zerados)}.")
+    return novo
+
+
+def _brl(v) -> str:
+    s = f"{Decimal(str(v)):,.2f}"
+    return "R$ " + s.replace(",", "@").replace(".", ",").replace("@", ".")

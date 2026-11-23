@@ -145,7 +145,7 @@ class TestEmail(unittest.TestCase):
         previa, r = _previa(["1", "2"], [_cad("000001", "33333333000133"), _cad("000002", "44444444000144")],
                             {"000001": {"saldo": "1000"}})
         self.assertEqual(list(previa["chave"]), ["000001"])
-        self.assertIn("sem saldo nos dados da planilha", dict(r.rejeitados)["000002"])
+        self.assertIn("sem saldo nos dados", dict(r.rejeitados)["000002"])
 
     def test_preparar_exige_dados(self):
         with self.assertRaises(ValueError):
@@ -164,6 +164,34 @@ class TestConferencia(unittest.TestCase):
         self.assertTrue(df.loc["000003", "situacao"].startswith("zerado"))
         self.assertTrue(df.loc["000004", "situacao"].startswith("maior"))
         self.assertEqual(df.loc["000002", "diferenca"], Decimal("-60.00"))
+
+    def test_usar_saldo_dw(self):
+        # o caso real: Transjofer pagou a adesão, Ourotrans venceu título novo
+        dados = {"004958": {"saldo": "5816.66", "nome": "TRANSJOFER"},
+                 "002889": {"saldo": "13973.91", "nome": "OUROTRANS"},
+                 "003262": {"saldo": "22117.60", "nome": "PEDRO"},
+                 "000001": {"saldo": "100.00", "nome": "PAGOU TUDO"}}
+        dw = {"004958": (Decimal("3566.66"), 2), "002889": (Decimal("15146.67"), 36),
+              "003262": (Decimal("22117.60"), 23)}
+        novo = titulos.usar_saldo_dw(dados, titulos.comparar(dados, dw))
+        self.assertEqual(novo["004958"]["saldo"], "3566.66")
+        self.assertEqual(novo["004958"]["saldo_planilha"], "5816.66")
+        self.assertEqual(novo["002889"]["saldo"], "15146.67")
+        self.assertEqual(novo["003262"]["saldo"], "22117.60")
+        self.assertEqual(novo["003262"]["nome"], "PEDRO")
+        self.assertNotIn("000001", novo)                    # zerado no DW: sai
+        self.assertEqual(dados["004958"]["saldo"], "5816.66")  # o original não muda
+
+        # e o e-mail sai com o valor do DW
+        previa, r = _previa(["4958", "1"], [_cad("004958", "55555555000155"), _cad("000001", "66666666000166")], novo)
+        job = fluxo.montar_fila(Campanha(id_campanha="BF", modelo=MODELO), previa)[0]
+        self.assertIn("R$ 3.566,66", job.texto)
+        self.assertNotIn("5.816,66", job.texto + job.html)
+        self.assertIn("000001", dict(r.rejeitados))
+
+    def test_usar_saldo_dw_com_conferencia_de_outros_dados(self):
+        with self.assertRaises(ValueError):
+            titulos.usar_saldo_dw({"000009": {"saldo": "1"}}, titulos.comparar({}, {}))
 
 
 if __name__ == "__main__":
