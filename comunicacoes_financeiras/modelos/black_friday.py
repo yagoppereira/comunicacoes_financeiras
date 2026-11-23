@@ -42,7 +42,7 @@ DESTAQUE = "{pct}% DE DESCONTO na quitação de todos os títulos em atraso."
 COMO_APROVEITAR = "Como aproveitar:"
 PASSOS = [
     "Responda este e-mail ou chame a gente no whatsapp {whatsapp}.",
-    "Enviaremos o boleto ou a chave PIX com o desconto já aplicado.",
+    "Enviaremos a conta bancária ou a chave PIX com o desconto já aplicado.",
     "Faça o pagamento até {prazo}.",
 ]
 FECHAMENTO = [

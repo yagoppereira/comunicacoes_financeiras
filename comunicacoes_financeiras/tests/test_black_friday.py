@@ -111,6 +111,8 @@ class TestEmail(unittest.TestCase):
             self.assertIn(t, job.html)
             self.assertIn(t, job.texto)
         self.assertIn("20% DE DESCONTO", job.texto)
+        self.assertIn("Enviaremos a conta bancária ou a chave PIX com o desconto já aplicado.", job.texto)
+        self.assertNotIn("boleto", job.texto + job.html)
         self.assertEqual(job.assunto, "Oferta Black Friday: 20% OFF - Títulos em Atraso – ctasmart – "
                                       "PEDRO LTDA - 11.111.111/0001-11")
         self.assertNotIn("Saldo em aberto por cadastro", job.texto)
