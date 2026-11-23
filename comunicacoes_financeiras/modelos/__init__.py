@@ -9,15 +9,18 @@ Cada modelo expõe:
     PARAMETROS     {nome: obrigatório?} aceitos em Campanha.parametros
     montar(clientes, campanha) -> {"assunto", "html", "texto"}
                    `clientes` é a lista de cadastros cobertos por UM e-mail.
+    DADOS_OBRIGATORIOS  (opcional) chaves que cada cliente precisa trazer em
+                   `dados` (ex.: saldo); ver fluxo.preparar(dados=...).
 
 Para criar um comunicado novo: copie unificacao_contratos.py, troque o texto e
 as marcações, e registre em MODELOS abaixo.
 """
 
-from . import unificacao_contratos
+from . import black_friday, unificacao_contratos
 
 MODELOS = {
     "unificacao_contratos": unificacao_contratos,
+    "black_friday": black_friday,
 }
 
 

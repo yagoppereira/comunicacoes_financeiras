@@ -104,15 +104,13 @@ def _normalizar_nome(v) -> str:
     return str(v or "").strip().casefold()
 
 
-def ler_lista_planilha(origem, aba: str = "lista comunicado",
-                       coluna: str = "COD CIGAM") -> list:
-    """Lê a coluna de códigos de uma aba do .xlsx.
+def _ler_aba(origem, aba: str, exigir: list) -> tuple:
+    """(cabeçalho, linhas, nome real da aba) de uma aba do .xlsx.
 
-    origem: caminho do arquivo, bytes do arquivo, ou link/ID do Drive.
-    Nome de aba e de coluna é comparado sem diferenciar maiúscula e sem os
-    espaços das pontas ('UNIFICAÇÃO ' com espaço no fim é comum).
-    Células vazias ficam de fora; o resto vai como está para preparar(), que
-    explica o que não reconhecer.
+    O cabeçalho é a primeira linha (entre as 15 primeiras) que tem TODAS as
+    colunas de `exigir`: planilha de trabalho costuma ter anotação acima do
+    cabeçalho ("considerar o que for sim" na linha 1 da resumo_). Nome
+    repetido de coluna vale a primeira ocorrência.
     """
     if isinstance(origem, (bytes, bytearray)):
         fonte = io.BytesIO(origem)
@@ -125,16 +123,60 @@ def ler_lista_planilha(origem, aba: str = "lista comunicado",
         abas = {_normalizar_nome(n): n for n in planilha.sheet_names}
         if _normalizar_nome(aba) not in abas:
             raise ValueError(f"aba {aba!r} não existe. Abas: {planilha.sheet_names}")
-        df = planilha.parse(abas[_normalizar_nome(aba)], dtype=object)
+        nome_aba = abas[_normalizar_nome(aba)]
+        bruto = planilha.parse(nome_aba, header=None, dtype=object).values.tolist()
 
-    colunas = {_normalizar_nome(c): c for c in df.columns}
-    if _normalizar_nome(coluna) not in colunas:
-        raise ValueError(f"coluna {coluna!r} não existe na aba {aba!r}. Colunas: {list(df.columns)}")
-    valores = [v for v in df[colunas[_normalizar_nome(coluna)]].tolist()
-               if not (v is None or (isinstance(v, float) and v != v) or str(v).strip() == "")]
-    print(f"{len(valores)} código(s) lido(s) da aba {abas[_normalizar_nome(aba)]!r} "
-          f"({len(df) - len(valores)} linha(s) vazia(s) ignorada(s)).")
+    exigidas = [_normalizar_nome(c) for c in exigir]
+    for i, linha in enumerate(bruto[:15]):
+        nomes = [_normalizar_nome(v) if not _vazio(v) else "" for v in linha]
+        if all(c in nomes for c in exigidas):
+            indice = {}
+            for j, n in enumerate(nomes):
+                if n and n not in indice:
+                    indice[n] = j
+            return indice, bruto[i + 1:], nome_aba
+    raise ValueError(f"não achei, nas 15 primeiras linhas da aba {nome_aba!r}, um cabeçalho "
+                     f"com as colunas {list(exigir)}.")
+
+
+def _vazio(v) -> bool:
+    return v is None or (isinstance(v, float) and v != v) or str(v).strip() == ""
+
+
+def ler_lista_planilha(origem, aba: str = "lista comunicado",
+                       coluna: str = "COD CIGAM") -> list:
+    """Lê a coluna de códigos de uma aba do .xlsx.
+
+    origem: caminho do arquivo, bytes do arquivo, ou link/ID do Drive.
+    Nome de aba e de coluna é comparado sem diferenciar maiúscula e sem os
+    espaços das pontas ('UNIFICAÇÃO ' com espaço no fim é comum).
+    Células vazias ficam de fora; o resto vai como está para preparar(), que
+    explica o que não reconhecer.
+    """
+    indice, linhas, nome_aba = _ler_aba(origem, aba, [coluna])
+    j = indice[_normalizar_nome(coluna)]
+    valores = [l[j] for l in linhas if j < len(l) and not _vazio(l[j])]
+    print(f"{len(valores)} código(s) lido(s) da aba {nome_aba!r} "
+          f"({len(linhas) - len(valores)} linha(s) vazia(s) ignorada(s)).")
     return valores
+
+
+def ler_tabela_planilha(origem, aba: str, colunas: dict) -> list:
+    """Lê várias colunas de uma aba: uma lista de dicts, um por linha.
+
+    colunas: {nome no código: nome do cabeçalho na planilha}, ex.:
+             {"empresa": "Empresa", "saldo": "Total Saldo"}.
+    Linha com todas essas colunas vazias fica de fora.
+    """
+    indice, linhas, nome_aba = _ler_aba(origem, aba, list(colunas.values()))
+    pos = {k: indice[_normalizar_nome(c)] for k, c in colunas.items()}
+    out = []
+    for l in linhas:
+        reg = {k: (l[j] if j < len(l) and not _vazio(l[j]) else None) for k, j in pos.items()}
+        if any(v is not None for v in reg.values()):
+            out.append(reg)
+    print(f"{len(out)} linha(s) lida(s) da aba {nome_aba!r}.")
+    return out
 
 
 def agrupar(incluidos: list) -> list:
@@ -164,14 +206,21 @@ def montar_previa(incluidos: list) -> pd.DataFrame:
     return pd.DataFrame(linhas, columns=COLUNAS_PREVIA)
 
 
-def preparar(bq, campanha, lista, project: str = PROJECT_ID):
+def preparar(bq, campanha, lista, project: str = PROJECT_ID, dados: dict = None):
     """Resolve a lista no DW e devolve (previa, resolucao).
 
     lista: códigos CIGAM, CNPJs ou CPFs — lista Python, coluna de planilha ou
     texto colado, um por linha. Imprime quem NÃO vai receber e por quê.
+    dados: {código: {...}} com o que o e-mail mostra de cada cliente (ex.: o
+           saldo da Black Friday). Vai CONGELADO na prévia junto do cadastro.
+           Obrigatório quando o modelo declara DADOS_OBRIGATORIOS.
     """
     modelo = modelos.obter(campanha.modelo)
     modelos.validar_parametros(modelo, campanha.parametros)
+    exige = getattr(modelo, "DADOS_OBRIGATORIOS", ())
+    if exige and dados is None:
+        raise ValueError(f"o modelo {campanha.modelo!r} precisa de dados por cliente "
+                         f"({', '.join(exige)}): passe dados= a preparar().")
 
     codigos, documentos = contatos.chaves_de_busca(lista)
     if not codigos and not documentos:
@@ -179,6 +228,8 @@ def preparar(bq, campanha, lista, project: str = PROJECT_ID):
 
     cadastros = contatos.buscar_cadastros(bq, codigos, documentos, project)
     resolucao = contatos.resolver(lista, cadastros, modelo.FLAGS_CONTATO)
+    if dados is not None:
+        _anexar_dados(resolucao, dados, exige)
     previa = montar_previa(resolucao.incluidos)
 
     print(f"{modelo.NOME} — campanha {campanha.id_campanha}")
@@ -187,6 +238,23 @@ def preparar(bq, campanha, lista, project: str = PROJECT_ID):
     print(f"\n{len(previa)} e-mail(s) a enviar "
           f"({int(previa['qtd_para'].sum()) if len(previa) else 0} destinatário(s)).")
     return previa, resolucao
+
+
+def _anexar_dados(resolucao, dados: dict, exige) -> None:
+    """Põe dados[código] em cada cliente incluído. Quem não tem o que o modelo
+    exige sai para os rejeitados — e-mail com valor faltando não sai."""
+    normal = {str(k).strip().zfill(6): v for k, v in dados.items()}
+    ficam = []
+    for cli in resolucao.incluidos:
+        d = normal.get(cli["codigo"])
+        faltam = [k for k in exige if d is None or d.get(k) in (None, "")]
+        if faltam:
+            resolucao.rejeitados.append(
+                (cli["codigo"], f"{cli['codigo']} sem {', '.join(faltam)} nos dados da planilha"))
+            continue
+        cli["dados"] = dict(d or {})
+        ficam.append(cli)
+    resolucao.incluidos = ficam
 
 
 def montar_fila(campanha, previa: pd.DataFrame, ja_avisados=frozenset()) -> list:
