@@ -128,11 +128,33 @@ barra Fuel Green, rodapé Night. O nome da marca é sempre `ctasmart`, minúscul
   fonte externa e mostra Helvetica/Arial; o resto do layout fica igual.
 - `previa_email()` mostra o cabeçalho de verdade no notebook (troca o `cid:` pela imagem).
 
+## Black Friday (desconto nos títulos em atraso)
+
+Modelo `black_friday`. Diferente da unificação, cada e-mail mostra um VALOR por cliente,
+que vem da planilha aprovada e não do DW:
+
+- **Quem e quanto:** aba `resumo_` da planilha "Black Friday (Inadimplência)", linhas com
+  `Considerar?` = Sim, coluna `Total Saldo`. O código CIGAM é o número no começo de
+  `Empresa` ("003262 - PEDRO ..."). `black_friday.selecionar()` recusa a planilha se houver
+  código repetido com saldos diferentes, linha sem código ou saldo zerado.
+- **Conta:** desconto de 20% (parâmetro `percentual`) sobre o saldo de cada cadastro,
+  arredondado meio-pra-cima no centavo; o total é a soma dos cadastros. O e-mail mostra saldo,
+  desconto e o valor à vista até 28/11/2026 (parâmetro `prazo`). Texto da aba "Modelo".
+- **Conferência no DW:** `titulos.conferir_saldos()` compara o saldo da planilha com os
+  títulos vencidos em aberto em `silver.titulos_cigam` e lista quem mudou. Não troca valor:
+  quem não deve receber sai da lista antes do `preparar()`.
+- **Destinatários:** os mesmos da unificação (NF-e ou boleto = S). Cadastros com os mesmos
+  destinatários vão num e-mail só, com o saldo de cada um e o total.
+- O valor fica **congelado na prévia**: o disparo manda o que foi conferido.
+
+O notebook `notebooks/black_friday.ipynb` tem o passo a passo.
+
 ## Novo comunicado
 
 Copie `comunicacoes_financeiras/modelos/unificacao_contratos.py`, troque `ASSUNTO`, `TITULO`,
 `PARAGRAFOS` (`**assim**` vira negrito), `FLAGS_CONTATO` e `PARAMETROS`, e registre em
-`comunicacoes_financeiras/modelos/__init__.py`. A moldura visual, a lista, os contatos, a
+`comunicacoes_financeiras/modelos/__init__.py`. Se o e-mail mostra valor por cliente, declare
+`DADOS_OBRIGATORIOS` e passe `dados=` ao `preparar()` (ver `black_friday.py`). A moldura visual, a lista, os contatos, a
 prévia, o envio e o log são os mesmos.
 
 ## Testes
